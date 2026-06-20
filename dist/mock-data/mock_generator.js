@@ -32,9 +32,10 @@ class MockDataGenerator {
             targetPhaseId: "NORTH",
         };
     }
-    getLayer2Data() {
-        // Force this below 0.70 to test the Confidence Fallback
-        const simulatedConfidence = 0.85;
+    getLayer2Data(overrideConfidence) {
+        // If no override provided, randomly vary confidence to test both scenarios
+        // ~50% of the time will be below 0.70 to trigger Member 4 hijack logic
+        let simulatedConfidence = overrideConfidence ?? (Math.random() < 0.5 ? 0.65 : 0.88);
         return {
             junctionId: "DEL_DL_ITO_01",
             timestamp: new Date().toISOString(),

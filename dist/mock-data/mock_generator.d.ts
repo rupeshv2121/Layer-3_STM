@@ -3,7 +3,7 @@ export declare class MockDataGenerator {
     private generateRandomDetections;
     private generateApproach;
     triggerEmergency(): EmergencyToken | null;
-    getLayer2Data(): Layer2Payload;
+    getLayer2Data(overrideConfidence?: number): Layer2Payload;
     getHistoricalData(): {
         phaseId: string;
         recommendedGreenTime: number;

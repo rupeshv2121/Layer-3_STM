@@ -1,8 +1,8 @@
 // mock-generator.ts
 import type {
-  ApproachData,
-  EmergencyToken,
-  Layer2Payload,
+    ApproachData,
+    EmergencyToken,
+    Layer2Payload,
 } from "../types/types";
 import { VEHICLE_WEIGHTS } from "../types/types";
 
@@ -41,9 +41,10 @@ export class MockDataGenerator {
     };
   }
 
-  public getLayer2Data(): Layer2Payload {
-    // Force this below 0.70 to test the Confidence Fallback
-    const simulatedConfidence = 0.85;
+  public getLayer2Data(overrideConfidence?: number): Layer2Payload {
+    // If no override provided, randomly vary confidence to test both scenarios
+    // ~50% of the time will be below 0.70 to trigger Member 4 hijack logic
+    let simulatedConfidence = overrideConfidence ?? (Math.random() < 0.5 ? 0.65 : 0.88);
 
     return {
       junctionId: "DEL_DL_ITO_01",
