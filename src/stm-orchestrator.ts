@@ -2,6 +2,8 @@
 // Chains: Layer 2 Data → Member 1 (Optimization) → Member 2 (Emergency) →
 //         Member 3 (Safety) → Member 4 (Resilience) → Hardware Actuation
 
+// This file acts as the central nervous system for your entire traffic management engine. It perfectly encapsulates the "Decide" and "Guard" flow we established, explicitly wiring together the work of your 4-to-5 team members into a single, cohesive 30-second execution loop.
+
 import { ConfidenceThresholds, ResilienceHandler } from "./resilience-handler";
 import { SafetyConfig, SafetySupervisor } from "./safety-supervisor";
 import {
@@ -55,7 +57,6 @@ export class STMOrchestrator {
 
   /**
    * Main entry point: Evaluates all inputs and produces final actuation command.
-   * This is where the 4 members collaborate.
    */
   public orchestrateActuation(
     layer2Data: Layer2Payload,

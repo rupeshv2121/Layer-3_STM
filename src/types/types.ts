@@ -1,3 +1,5 @@
+// This code represents the digital boundaries and data contracts (types.ts) for your Layer 3 engine.
+
 // 1. Vehicle Weights
 export const VEHICLE_WEIGHTS = {
   Motorcycle: 0.5,
@@ -17,11 +19,12 @@ export interface VehicleDetection {
   count: number;
 }
 
+// defines the traffic state for a specific direction
 export interface ApproachData {
   approachId: "NORTH" | "SOUTH" | "EAST" | "WEST";
-  spatialOccupancyPct: number; // 0.0 to 100.0
+  spatialOccupancyPct: number; // needed for Max-Pressure
   detections: VehicleDetection[];
-  waitingTimeSeconds: number;
+  waitingTimeSeconds: number; // needed for the Priority Score
   arrivalRatePerMin: number;
 }
 
@@ -35,6 +38,7 @@ export interface Layer2Payload {
 // 3. Emergency Dispatch System (EMVS)
 export type PriorityClass = "CRITICAL" | "HIGH" | "NORMAL";
 
+// Used in the mathematical formula to resolve conflicts if two ambulances arrive at once
 export const PRIORITY_CLASS_MULTIPLIER: Record<PriorityClass, number> = {
   CRITICAL: 3,
   HIGH: 2,
@@ -46,7 +50,7 @@ export interface EmergencyToken {
   priorityClass: PriorityClass;
   etaSeconds: number;
   cryptographicToken: string;
-  targetPhaseId: string; // Which approach they need green
+  targetPhaseId: string; // Which phase they need to turn green
 }
 
 // 4. Historical Fallback Database

@@ -1,4 +1,4 @@
-# Layer-3 STM (Signal Timing Module) - Complete Project Guide
+# Layer-3 STM (Signal Timing Module)
 
 ## 🎯 Project Overview
 
@@ -33,8 +33,8 @@ Layer 4 (Hardware Actuation)
 
 | Member | File | Role | Status |
 |--------|------|------|--------|
-| **1** | `stm-orchestrator.ts` (placeholder) | Generate optimization proposals using Max-Pressure algorithm | ⏳ TODO |
-| **2** | `stm-orchestrator.ts` (placeholder) | Handle emergency vehicle (EMV) requests with Green Corridor logic | ⏳ TODO |
+| **1** | `stm-orchestrator.ts` | Generate optimization proposals using Max-Pressure algorithm | ⏳ TODO |
+| **2** | `stm-orchestrator.ts` | Handle emergency vehicle (EMV) requests with Green Corridor logic | ⏳ TODO |
 | **3** | `safety-supervisor.ts` | ✅ Validate safety constraints & enforce clearance intervals | ✅ DONE |
 | **4** | `resilience-handler.ts` | ✅ Monitor confidence scores & hijack to fallback if needed | ✅ DONE |
 
