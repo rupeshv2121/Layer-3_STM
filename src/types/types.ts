@@ -56,7 +56,26 @@ export interface HistoricalTimingPlan {
   historicalDemand: number;
 }
 
-// 5. Output to Layer 4 (Hardware Actuation)
+// 5. Member 1 Output (Normal-Mode Architect)
+export interface OptimizationProposal {
+  approachId: "NORTH" | "SOUTH" | "EAST" | "WEST";
+  priorityScore: number; // Person-centric weighted vehicle count
+  proposedGreenTime: number; // Calculated via Max-Pressure formula
+  method: "MAX_PRESSURE";
+  timestamp: string;
+}
+
+// 6. Member 2 Output (Emergency Pathfinder)
+export interface EmergencyResponse {
+  emvId: string;
+  targetPhaseId: "NORTH" | "SOUTH" | "EAST" | "WEST";
+  conflictIndex: number; // Priority Class * 100 - ETA
+  requiredGreenDuration: number; // How long this phase needs green
+  executionUrgency: "CRITICAL" | "HIGH" | "NORMAL";
+  timestamp: string;
+}
+
+// 7. Output to Layer 4 (Hardware Actuation)
 export interface ActuationCommand {
   junctionId: string;
   commandId: string;

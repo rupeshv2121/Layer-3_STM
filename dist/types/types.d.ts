@@ -39,6 +39,21 @@ export interface HistoricalTimingPlan {
     recommendedGreenTime: number;
     historicalDemand: number;
 }
+export interface OptimizationProposal {
+    approachId: "NORTH" | "SOUTH" | "EAST" | "WEST";
+    priorityScore: number;
+    proposedGreenTime: number;
+    method: "MAX_PRESSURE";
+    timestamp: string;
+}
+export interface EmergencyResponse {
+    emvId: string;
+    targetPhaseId: "NORTH" | "SOUTH" | "EAST" | "WEST";
+    conflictIndex: number;
+    requiredGreenDuration: number;
+    executionUrgency: "CRITICAL" | "HIGH" | "NORMAL";
+    timestamp: string;
+}
 export interface ActuationCommand {
     junctionId: string;
     commandId: string;

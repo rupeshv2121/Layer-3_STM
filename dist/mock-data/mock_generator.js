@@ -52,6 +52,8 @@ class MockDataGenerator {
         return [
             { phaseId: "NORTH", recommendedGreenTime: 45, historicalDemand: 60 },
             { phaseId: "SOUTH", recommendedGreenTime: 30, historicalDemand: 40 },
+            { phaseId: "EAST", recommendedGreenTime: 35, historicalDemand: 50 },
+            { phaseId: "WEST", recommendedGreenTime: 40, historicalDemand: 55 },
         ];
     }
 }

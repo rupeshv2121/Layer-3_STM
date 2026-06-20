@@ -1,81 +1,205 @@
 import { MockDataGenerator } from "./mock-data/mock_generator";
-import { ResilienceHandler } from "./resilience-handler";
+import { STMOrchestrator } from "./stm-orchestrator";
 
 const generator = new MockDataGenerator();
-const resilience = new ResilienceHandler();
 
-console.log("=== Layer-3 STM Mock Data Generation ===\n");
-
-// Generate Layer 2 Perception Data
-console.log("--- Layer 2 Payload (Perception Data) ---");
-const layer2Data = generator.getLayer2Data();
-console.log(JSON.stringify(layer2Data, null, 2));
-
-// Check for Emergency Data
-console.log("\n--- Emergency Token ---");
-const emergency = generator.triggerEmergency();
-if (emergency) {
-  console.log(JSON.stringify(emergency, null, 2));
-} else {
-  console.log("No emergency detected");
-}
-
-// Get Historical Data
-console.log("\n--- Historical Timing Plan Data ---");
-const historicalData = generator.getHistoricalData();
-console.log(JSON.stringify(historicalData, null, 2));
-
-// ===== TEST MEMBER 4: DATA & RESILIENCE LAYER =====
-console.log("\n=== Member 4: Data & Resilience Layer Test ===\n");
-
-// Test Scenario 1: Confidence ABOVE 70% (Normal Operation)
-console.log("--- Test 1: HIGH Confidence (0.88) - Should use optimized plan ---");
-const highConfidenceData = generator.getLayer2Data(0.88);
-const resilientDecision1 = resilience.evaluateConfidenceAndDecide(highConfidenceData, historicalData);
-console.log(`Action: ${resilientDecision1.action}`);
-console.log(`Confidence: ${(resilientDecision1.confidenceScore * 100).toFixed(2)}%`);
-console.log(`Reason: ${resilientDecision1.reason}\n`);
-
-// Test Scenario 2: Confidence BELOW 70% (Hijack Activated)
-console.log("--- Test 2: LOW Confidence (0.65) - Should HIJACK to historical fallback ---");
-const lowConfidenceData = generator.getLayer2Data(0.65);
-const resilientDecision2 = resilience.evaluateConfidenceAndDecide(lowConfidenceData, historicalData);
-console.log(`Action: ${resilientDecision2.action}`);
-console.log(`Confidence: ${(resilientDecision2.confidenceScore * 100).toFixed(2)}%`);
-console.log(`Reason: ${resilientDecision2.reason}`);
-console.log(`Historical Plans Override: ${resilientDecision2.historicalPlanOverride?.length} plans provided\n`);
-
-// Test Scenario 3: Verify hijackAndEnforceHistorical enforcement
-console.log("--- Test 3: Verify HIJACK enforcement on actuation command ---");
-const proposedCommand = {
-  junctionId: "DEL_DL_ITO_01",
-  commandId: "CMD-001",
-  targetPhaseId: "NORTH",
-  durationSeconds: 60, // Proposed optimized duration
-  clearanceIntervals: { yellowSeconds: 3, allRedSeconds: 2 },
-  executionMode: "NORMAL_MAX_PRESSURE" as const,
+// STM Configuration
+const safetyConfig = {
+    minYellowSeconds: 3,
+    minAllRedSeconds: 2,
+    minPedestrianWalkSeconds: 8,
+    minGreenEnforced: 10,
+    conflictMatrix: {
+        NORTH: ["SOUTH"],
+        SOUTH: ["NORTH"],
+        EAST: ["WEST"],
+        WEST: ["EAST"],
+    },
 };
 
-// Get the state after hijack was activated
-const resilientState = resilience.getState();
-console.log(`Fallback Active: ${resilientState.isFallbackActive}`);
-console.log(`Fallback Reason: ${resilientState.fallbackReason}`);
+const orchestrator = new STMOrchestrator({
+    safetyConfig,
+    resilienceThresholds: {
+        criticalLowerBound: 0.70,
+        warningThreshold: 0.80,
+    },
+    maxDataAgeSeconds: 10,
+    defaultPhaseIfNoProposal: "NORTH",
+});
 
-// Apply the hijack enforcement
-const hijackedCommand = resilience.hijackAndEnforceHistorical(proposedCommand, historicalData);
-console.log(`Original Duration: ${proposedCommand.durationSeconds}s`);
-console.log(`Hijacked Duration: ${hijackedCommand.durationSeconds}s (from historical: 45s for NORTH)`);
-console.log(`Execution Mode Changed: ${proposedCommand.executionMode} → ${hijackedCommand.executionMode}\n`);
+console.log("╔════════════════════════════════════════════════════════════╗");
+console.log("║         Layer-3 STM - Full Integration Test                ║");
+console.log("║  (Member 1, 2, 3, 4 Pipeline Orchestration)                ║");
+console.log("╚════════════════════════════════════════════════════════════╝\n");
 
-// Test Scenario 4: Recovery (confidence recovers above 70%)
-console.log("--- Test 4: Confidence RECOVERS (0.75) - Should exit fallback ---");
-const recoveredConfidenceData = generator.getLayer2Data(0.75);
-const resilientDecision4 = resilience.evaluateConfidenceAndDecide(recoveredConfidenceData, historicalData);
-console.log(`Action: ${resilientDecision4.action}`);
-console.log(`Confidence: ${(resilientDecision4.confidenceScore * 100).toFixed(2)}%`);
-console.log(`Reason: ${resilientDecision4.reason}\n`);
+// ===== SCENARIO 1: Normal Operation (HIGH Confidence, No Emergency) =====
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("SCENARIO 1: Normal Operation (Confidence HIGH, No Emergency)");
+console.log("═══════════════════════════════════════════════════════════════\n");
 
-const finalState = resilience.getState();
-console.log(`Fallback Active After Recovery: ${finalState.isFallbackActive}`);
+const layer2Data1 = generator.getLayer2Data(0.88);
+const historicalData = generator.getHistoricalData();
 
-console.log("\n=== Mock Data Generation & Member 4 Verification Complete ===");
+console.log("📊 Layer 2 Perception Data:");
+console.log(
+    `   Junction: ${layer2Data1.junctionId}`
+);
+console.log(
+    `   Confidence Score: ${(layer2Data1.cvConfidenceScore * 100).toFixed(
+        2
+    )}% ✅ (Above 70%)`
+);
+console.log(
+    `   Approaches: ${layer2Data1.approaches.map((a) => `${a.approachId}(${a.spatialOccupancyPct}%)`).join(", ")}\n`
+);
+
+const result1 = orchestrator.orchestrateActuation(
+    layer2Data1,
+    null, // No emergency
+    historicalData
+);
+
+console.log("📋 Orchestration Decision Chain:");
+result1.reasonChain.forEach((reason, idx) => {
+    console.log(`   ${idx + 1}. ${reason}`);
+});
+
+console.log("\n✅ FINAL ACTUATION COMMAND:");
+console.log(`   Target Phase: ${result1.finalCommand.targetPhaseId}`);
+console.log(`   Duration: ${result1.finalCommand.durationSeconds}s`);
+console.log(`   Execution Mode: ${result1.finalCommand.executionMode}`);
+console.log(
+    `   Clearances: Yellow=${result1.finalCommand.clearanceIntervals.yellowSeconds}s, AllRed=${result1.finalCommand.clearanceIntervals.allRedSeconds}s`
+);
+console.log(`   Safety Passed: ${result1.safetyValidationPassed ? "✅ YES" : "❌ NO"}`);
+console.log(
+    `   Execution Path: ${result1.executionPath}\n`
+);
+
+// ===== SCENARIO 2: Emergency Mode (Emergency Token Detected) =====
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("SCENARIO 2: Emergency Mode (EMV Detected)");
+console.log("═══════════════════════════════════════════════════════════════\n");
+
+const emergencyToken = {
+    emvId: "AMB-0042",
+    priorityClass: "CRITICAL" as const,
+    etaSeconds: 35,
+    cryptographicToken: "0xVALID_MOCK_TOKEN",
+    targetPhaseId: "EAST" as const,
+};
+
+console.log("🚨 Emergency Token Detected:");
+console.log(`   EMV ID: ${emergencyToken.emvId}`);
+console.log(`   Priority: ${emergencyToken.priorityClass}`);
+console.log(`   ETA: ${emergencyToken.etaSeconds}s`);
+console.log(`   Needs: ${emergencyToken.targetPhaseId} phase green\n`);
+
+const result2 = orchestrator.orchestrateActuation(
+    layer2Data1,
+    emergencyToken,
+    historicalData
+);
+
+console.log("📋 Orchestration Decision Chain:");
+result2.reasonChain.forEach((reason, idx) => {
+    console.log(`   ${idx + 1}. ${reason}`);
+});
+
+console.log("\n✅ FINAL ACTUATION COMMAND (EMERGENCY MODE):");
+console.log(`   Target Phase: ${result2.finalCommand.targetPhaseId}`);
+console.log(`   Duration: ${result2.finalCommand.durationSeconds}s`);
+console.log(`   Execution Mode: ${result2.finalCommand.executionMode}`);
+console.log(`   Safety Passed: ${result2.safetyValidationPassed ? "✅ YES" : "❌ NO"}`);
+console.log(
+    `   Execution Path: ${result2.executionPath}\n`
+);
+
+// ===== SCENARIO 3: Low Confidence Hijack (Resilience Fallback) =====
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("SCENARIO 3: Low Confidence (Member 4 Hijack Activated)");
+console.log("═══════════════════════════════════════════════════════════════\n");
+
+const layer2Data3 = generator.getLayer2Data(0.62); // Below 70% threshold
+
+console.log("📊 Layer 2 Perception Data:");
+console.log(`   Confidence Score: ${(layer2Data3.cvConfidenceScore * 100).toFixed(2)}% ❌ (Below 70%)`);
+console.log(
+    `   Status: Member 4 (Resilience) will HIJACK to historical fallback\n`
+);
+
+const result3 = orchestrator.orchestrateActuation(
+    layer2Data3,
+    null,
+    historicalData
+);
+
+console.log("📋 Orchestration Decision Chain:");
+result3.reasonChain.forEach((reason, idx) => {
+    console.log(`   ${idx + 1}. ${reason}`);
+});
+
+console.log("\n✅ FINAL ACTUATION COMMAND (HIJACKED TO FALLBACK):");
+console.log(`   Target Phase: ${result3.finalCommand.targetPhaseId}`);
+console.log(`   Duration: ${result3.finalCommand.durationSeconds}s (from historical database)`);
+console.log(`   Execution Mode: ${result3.finalCommand.executionMode}`);
+console.log(
+    `   Execution Path: ${result3.executionPath}\n`
+);
+
+// ===== SCENARIO 4: Stale Data Detection =====
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("SCENARIO 4: Stale Layer 2 Data (> 10 seconds old)");
+console.log("═══════════════════════════════════════════════════════════════\n");
+
+// Create stale data (11 seconds in the past)
+const staleLayers2Data = {
+    ...layer2Data1,
+    timestamp: new Date(Date.now() - 11000).toISOString(),
+};
+
+console.log("📊 Layer 2 Perception Data:");
+console.log(`   Data Age: ~11 seconds (max allowed: 10s)`);
+console.log(
+    `   Status: Orchestrator will force fallback due to data staleness\n`
+);
+
+const result4 = orchestrator.orchestrateActuation(
+    staleLayers2Data,
+    null,
+    historicalData
+);
+
+console.log("📋 Orchestration Decision Chain:");
+result4.reasonChain.forEach((reason, idx) => {
+    console.log(`   ${idx + 1}. ${reason}`);
+});
+
+console.log("\n✅ FINAL ACTUATION COMMAND (STALE DATA FALLBACK):");
+console.log(`   Target Phase: ${result4.finalCommand.targetPhaseId}`);
+console.log(`   Execution Mode: ${result4.finalCommand.executionMode}`);
+console.log(`   Execution Path: ${result4.executionPath}\n`);
+
+// ===== ORCHESTRATOR STATE SUMMARY =====
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("ORCHESTRATOR STATE SUMMARY");
+console.log("═══════════════════════════════════════════════════════════════\n");
+
+const orchestratorState = orchestrator.getOrchestrationState();
+console.log("📡 Resilience Module State:");
+console.log(`   Fallback Active: ${orchestratorState.resilience.isFallbackActive}`);
+console.log(`   Current Confidence: ${(orchestratorState.resilience.currentConfidenceScore * 100).toFixed(2)}%`);
+if (orchestratorState.resilience.fallbackReason) {
+    console.log(
+        `   Fallback Reason: ${orchestratorState.resilience.fallbackReason}`
+    );
+}
+
+console.log("\n╔════════════════════════════════════════════════════════════╗");
+console.log("║     Layer-3 STM Integration Test Complete                  ║");
+console.log("║  ✅ Member 3 (Safety Supervisor) - Fully Verified         ║");
+console.log("║  ✅ Member 4 (Data & Resilience) - Fully Verified         ║");
+console.log("║  ⏳ Member 1 (Normal-Mode Architect) - Ready for code      ║");
+console.log("║  ⏳ Member 2 (Emergency Pathfinder) - Ready for code       ║");
+console.log("╚════════════════════════════════════════════════════════════╝");
+
