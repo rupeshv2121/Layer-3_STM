@@ -4,6 +4,7 @@
 
 // This file acts as the central nervous system for your entire traffic management engine. It perfectly encapsulates the "Decide" and "Guard" flow we established, explicitly wiring together the work of your 4-to-5 team members into a single, cohesive 30-second execution loop.
 
+import { PhaseState, runMaxPressureOptimizer } from "./max-pressure-optimizer";
 import { ConfidenceThresholds, ResilienceHandler } from "./resilience-handler";
 import { SafetyConfig, SafetySupervisor } from "./safety-supervisor";
 import {
@@ -47,12 +48,27 @@ export class STMOrchestrator {
   private resilienceHandler: ResilienceHandler;
   private config: OrchestratorConfig;
   private lastValidTimestamp: string;
+  private currentPhaseState: PhaseState; // Track current phase for Member 2
+  private lastGreenTracker: Record<string, number>; // Track seconds since last green
 
   constructor(config: OrchestratorConfig) {
     this.config = config;
     this.safetyValidator = new SafetySupervisor(config.safetyConfig);
     this.resilienceHandler = new ResilienceHandler(config.resilienceThresholds);
     this.lastValidTimestamp = new Date().toISOString();
+    // Initialize phase state for Member 2
+    this.currentPhaseState = {
+      currentPhaseId: "PHASE_NORTH_GREEN",
+      phaseElapsedSeconds: 0,
+      currentGreenDuration: 30,
+      currentDensity: "medium",
+    };
+    this.lastGreenTracker = {
+      NORTH: 0,
+      SOUTH: 0,
+      EAST: 0,
+      WEST: 0,
+    };
   }
 
   /**
@@ -138,11 +154,33 @@ export class STMOrchestrator {
         `Using EMERGENCY_MODE with phase ${emergencyToken.targetPhaseId}`,
       );
     } else {
-      // TODO: Member 1 will implement this - for now, use fallback
-      reasonChain.push(
-        `Using NORMAL_MODE - would call Member 1 for optimization`,
+      // ===== MEMBER 1 & 2: Normal-Mode Optimization =====
+      // Call Member 2 (runMaxPressureOptimizer), which internally calls Member 1 (scoreAllApproaches)
+      reasonChain.push(`Calling Member 2 (Max-Pressure Optimizer)`);
+
+      const approachMetrics = this.convertLayer2ToApproachMetrics(
+        layer2Data,
+        resilienceDecision.confidenceScore,
       );
-      selectedProposal = this.generateNormalModeProposal(layer2Data);
+      const downstreamDensity = this.generateDownstreamDensity(layer2Data);
+      const historicalGreen = this.getHistoricalGreenTime(historicalPlans);
+
+      const optimizedPlan = runMaxPressureOptimizer(
+        layer2Data.junctionId,
+        approachMetrics,
+        downstreamDensity,
+        this.currentPhaseState,
+        resilienceDecision.confidenceScore,
+        historicalGreen,
+      );
+
+      reasonChain.push(
+        `Member 1 scored approaches | Member 2 selected ${optimizedPlan.winningDirection}`,
+      );
+      selectedProposal = this.convertProposedPlanToOptimization(optimizedPlan);
+
+      // Update phase state for next cycle
+      this.updatePhaseState(optimizedPlan);
     }
 
     // ===== STAGE 4: Safety Validation (Member 3 Entry Point) =====

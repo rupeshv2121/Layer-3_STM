@@ -15,10 +15,10 @@
 // ============================================================
 
 import {
-  scoreAllApproaches,
   ApproachMetrics,
+  scoreAllApproaches,
   ScoredApproach,
-} from "./weighted-demand";
+} from "./types/types";
 
 // ─── Types ───────────────────────────────────────────────────
 export interface DownstreamDensity {
@@ -51,13 +51,13 @@ export interface ProposedPlan {
 }
 
 // ─── Constants ───────────────────────────────────────────────
-const MIN_GREEN              = 15;
-const MAX_GREEN              = 90;
-const YELLOW_TIME            = 5;
-const ALL_RED_TIME           = 2;
-const SCALING_FACTOR         = 1.5;
-const EXTENSION_SEC          = 10;
-const CONF_THRESHOLD         = 0.70;
+const MIN_GREEN = 15;
+const MAX_GREEN = 90;
+const YELLOW_TIME = 5;
+const ALL_RED_TIME = 2;
+const SCALING_FACTOR = 1.5;
+const EXTENSION_SEC = 10;
+const CONF_THRESHOLD = 0.7;
 const DEFAULT_HISTORICAL_GREEN = 30;
 
 // ─── EMV Pause/Resume System ─────────────────────────────────
@@ -67,7 +67,7 @@ export function pauseOptimizer(junctionId: string): void {
   pausedJunctions.add(junctionId);
   console.log(
     `[PAUSED] Junction ${junctionId} — EMV corridor active. ` +
-    `Normal optimizer suspended.`
+      `Normal optimizer suspended.`,
   );
 }
 
@@ -75,17 +75,17 @@ export function resumeOptimizer(junctionId: string): void {
   pausedJunctions.delete(junctionId);
   console.log(
     `[RESUMED] Junction ${junctionId} — returning to normal mode. ` +
-    `Max-pressure recovery begins automatically.`
+      `Max-pressure recovery begins automatically.`,
   );
 }
 
 // ─── Pressure Calculation ─────────────────────────────────────
 function calculatePressure(
   scored: ScoredApproach,
-  downstream: DownstreamDensity[]
+  downstream: DownstreamDensity[],
 ): number {
   const ds = downstream.find(
-    d => d.direction.toUpperCase() === scored.direction
+    (d) => d.direction.toUpperCase() === scored.direction,
   );
   const downstreamDemand = ds ? ds.occupancyPct : 0;
   return scored.priorityScore - downstreamDemand;
@@ -110,18 +110,18 @@ function shouldExtendGreen(phase: PhaseState): boolean {
 function buildEMVOverridePlan(junctionId: string): ProposedPlan {
   return {
     junctionId,
-    timestamp:        new Date().toISOString(),
-    dataSource:       "EMV_OVERRIDE",
-    targetPhaseId:    "PHASE_EMV_CONTROLLED",
-    greenDuration:    0,
-    yellowDuration:   0,
-    allRedDuration:   0,
+    timestamp: new Date().toISOString(),
+    dataSource: "EMV_OVERRIDE",
+    targetPhaseId: "PHASE_EMV_CONTROLLED",
+    greenDuration: 0,
+    yellowDuration: 0,
+    allRedDuration: 0,
     pressureSnapshot: {},
-    priorityScores:   {},
-    personFlows:      {},
-    spillbackFlags:   {},
-    starvationFlags:  {},
-    extendGreen:      false,
+    priorityScores: {},
+    personFlows: {},
+    spillbackFlags: {},
+    starvationFlags: {},
+    extendGreen: false,
     winningDirection: "EMV_CONTROLLED",
   };
 }
@@ -129,26 +129,26 @@ function buildEMVOverridePlan(junctionId: string): ProposedPlan {
 // ─── Build Historical Fallback Plan ───────────────────────────
 function buildHistoricalFallback(
   junctionId: string,
-  historicalGreenTime: number = DEFAULT_HISTORICAL_GREEN
+  historicalGreenTime: number = DEFAULT_HISTORICAL_GREEN,
 ): ProposedPlan {
   console.log(
     `[FALLBACK] Junction ${junctionId}: ` +
-    `low confidence → using historical timing (${historicalGreenTime}s)`
+      `low confidence → using historical timing (${historicalGreenTime}s)`,
   );
   return {
     junctionId,
-    timestamp:        new Date().toISOString(),
-    dataSource:       "HISTORICAL",
-    targetPhaseId:    "PHASE_HISTORICAL_DEFAULT",
-    greenDuration:    historicalGreenTime,
-    yellowDuration:   YELLOW_TIME,
-    allRedDuration:   ALL_RED_TIME,
+    timestamp: new Date().toISOString(),
+    dataSource: "HISTORICAL",
+    targetPhaseId: "PHASE_HISTORICAL_DEFAULT",
+    greenDuration: historicalGreenTime,
+    yellowDuration: YELLOW_TIME,
+    allRedDuration: ALL_RED_TIME,
     pressureSnapshot: {},
-    priorityScores:   {},
-    personFlows:      {},
-    spillbackFlags:   {},
-    starvationFlags:  {},
-    extendGreen:      false,
+    priorityScores: {},
+    personFlows: {},
+    spillbackFlags: {},
+    starvationFlags: {},
+    extendGreen: false,
     winningDirection: "HISTORICAL",
   };
 }
@@ -160,9 +160,8 @@ export function runMaxPressureOptimizer(
   downstream: DownstreamDensity[],
   currentPhase: PhaseState,
   confidenceScore: number,
-  historicalGreenTime?: number
+  historicalGreenTime?: number,
 ): ProposedPlan {
-
   // ─── Check 1: EMV Override ──────────────────────────────
   if (pausedJunctions.has(junctionId)) {
     return buildEMVOverridePlan(junctionId);
@@ -177,35 +176,35 @@ export function runMaxPressureOptimizer(
   const scoredApproaches = scoreAllApproaches(approaches);
 
   // ─── Step 3: Calculate pressure per approach ────────────
-  const pressureMap:    Record<string, number>  = {};
-  const scoreMap:       Record<string, number>  = {};
-  const flowMap:        Record<string, number>  = {};
-  const spillbackMap:   Record<string, boolean> = {};
-  const starvationMap:  Record<string, boolean> = {};
+  const pressureMap: Record<string, number> = {};
+  const scoreMap: Record<string, number> = {};
+  const flowMap: Record<string, number> = {};
+  const spillbackMap: Record<string, boolean> = {};
+  const starvationMap: Record<string, boolean> = {};
 
-  scoredApproaches.forEach(scored => {
-    pressureMap[scored.direction]   = calculatePressure(scored, downstream);
-    scoreMap[scored.direction]      = scored.priorityScore;
-    flowMap[scored.direction]       = scored.personFlow;
-    spillbackMap[scored.direction]  = scored.spillbackBoost;
+  scoredApproaches.forEach((scored) => {
+    pressureMap[scored.direction] = calculatePressure(scored, downstream);
+    scoreMap[scored.direction] = scored.priorityScore;
+    flowMap[scored.direction] = scored.personFlow;
+    spillbackMap[scored.direction] = scored.spillbackBoost;
     starvationMap[scored.direction] = scored.starvationOverride;
   });
 
   // ─── Select Winning Phase ────────────────────────────────
-  let winningDir      = "";
+  let winningDir = "";
   let highestPressure = -Infinity;
 
   Object.entries(pressureMap).forEach(([dir, pressure]) => {
     if (pressure > highestPressure) {
       highestPressure = pressure;
-      winningDir      = dir;
+      winningDir = dir;
     }
   });
 
   // ─── Step 4: Calculate Green Duration ───────────────────
-  const winningScore  = scoreMap[winningDir] ?? 0;
-  let greenDuration   = calculateGreenTime(winningScore);
-  let extendGreen     = false;
+  const winningScore = scoreMap[winningDir] ?? 0;
+  let greenDuration = calculateGreenTime(winningScore);
+  let extendGreen = false;
 
   // ─── Step 5: Adaptive Extension ─────────────────────────
   if (
@@ -214,36 +213,36 @@ export function runMaxPressureOptimizer(
   ) {
     greenDuration = Math.min(
       currentPhase.currentGreenDuration + EXTENSION_SEC,
-      MAX_GREEN
+      MAX_GREEN,
     );
     extendGreen = true;
     console.log(
       `[EXTEND] ${winningDir}: ` +
-      `extending green by ${EXTENSION_SEC}s → ${greenDuration}s total`
+        `extending green by ${EXTENSION_SEC}s → ${greenDuration}s total`,
     );
   }
 
   console.log(
     `[OPTIMIZER] Junction ${junctionId}: ` +
-    `${winningDir} selected | ` +
-    `Pressure: ${highestPressure.toFixed(2)} | ` +
-    `Green: ${greenDuration}s | ` +
-    `People: ${flowMap[winningDir]}`
+      `${winningDir} selected | ` +
+      `Pressure: ${highestPressure.toFixed(2)} | ` +
+      `Green: ${greenDuration}s | ` +
+      `People: ${flowMap[winningDir]}`,
   );
 
   return {
     junctionId,
-    timestamp:        new Date().toISOString(),
-    dataSource:       "LIVE",
-    targetPhaseId:    `PHASE_${winningDir}_GREEN`,
+    timestamp: new Date().toISOString(),
+    dataSource: "LIVE",
+    targetPhaseId: `PHASE_${winningDir}_GREEN`,
     greenDuration,
-    yellowDuration:   YELLOW_TIME,
-    allRedDuration:   ALL_RED_TIME,
+    yellowDuration: YELLOW_TIME,
+    allRedDuration: ALL_RED_TIME,
     pressureSnapshot: pressureMap,
-    priorityScores:   scoreMap,
-    personFlows:      flowMap,
-    spillbackFlags:   spillbackMap,
-    starvationFlags:  starvationMap,
+    priorityScores: scoreMap,
+    personFlows: flowMap,
+    spillbackFlags: spillbackMap,
+    starvationFlags: starvationMap,
     extendGreen,
     winningDirection: winningDir,
   };

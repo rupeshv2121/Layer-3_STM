@@ -8,21 +8,24 @@
 // pauseOptimizer/resumeOptimizer — Member 3's domain.
 // ============================================================
 
-import { ApproachMetrics } from "./weighted-demand";
 import {
-  runMaxPressureOptimizer,
   DownstreamDensity,
   PhaseState,
   pauseOptimizer,
   resumeOptimizer,
+  runMaxPressureOptimizer,
 } from "./max-pressure-optimizer";
+import { ApproachMetrics } from "./types/types";
 
-const JUNCTION_ID   = "JN-042";
+const JUNCTION_ID = "JN-042";
 const CYCLE_SECONDS = 8;
-const DIRECTIONS    = ["NORTH", "SOUTH", "EAST", "WEST"];
+const DIRECTIONS = ["NORTH", "SOUTH", "EAST", "WEST"];
 
 const lastGreenTracker: Record<string, number> = {
-  NORTH: 0, SOUTH: 0, EAST: 0, WEST: 0,
+  NORTH: 0,
+  SOUTH: 0,
+  EAST: 0,
+  WEST: 0,
 };
 
 let currentPhase: PhaseState = {
@@ -45,48 +48,50 @@ function randomDensity(): "low" | "medium" | "high" {
 }
 
 function generateMockApproaches(): ApproachMetrics[] {
-  return DIRECTIONS.map(dir => {
-    const motorcycle    = rand(0, 15);
-    const car           = rand(0, 20);
+  return DIRECTIONS.map((dir) => {
+    const motorcycle = rand(0, 15);
+    const car = rand(0, 20);
     const auto_rickshaw = rand(0, 10);
-    const mini_truck    = rand(0, 5);
-    const bus           = rand(0, 3);
-    const heavy_truck   = rand(0, 2);
+    const mini_truck = rand(0, 5);
+    const bus = rand(0, 3);
+    const heavy_truck = rand(0, 2);
 
     const detections = [
-      { type: "motorcycle",    count: motorcycle    },
-      { type: "car",           count: car           },
+      { type: "motorcycle", count: motorcycle },
+      { type: "car", count: car },
       { type: "auto_rickshaw", count: auto_rickshaw },
-      { type: "mini_truck",    count: mini_truck    },
-      { type: "bus",           count: bus           },
-      { type: "heavy_truck",   count: heavy_truck   },
-    ].filter(d => d.count > 0);
+      { type: "mini_truck", count: mini_truck },
+      { type: "bus", count: bus },
+      { type: "heavy_truck", count: heavy_truck },
+    ].filter((d) => d.count > 0);
 
-    const totalVehicles = motorcycle + car + auto_rickshaw +
-                           mini_truck + bus + heavy_truck;
+    const totalVehicles =
+      motorcycle + car + auto_rickshaw + mini_truck + bus + heavy_truck;
 
     const roadCapacity = 100;
-    const queueLength  = Math.min(totalVehicles, roadCapacity);
+    const queueLength = Math.min(totalVehicles, roadCapacity);
 
-    lastGreenTracker[dir as keyof typeof lastGreenTracker] = 
-      (lastGreenTracker[dir as keyof typeof lastGreenTracker] ?? 0) + CYCLE_SECONDS;
+    lastGreenTracker[dir as keyof typeof lastGreenTracker] =
+      (lastGreenTracker[dir as keyof typeof lastGreenTracker] ?? 0) +
+      CYCLE_SECONDS;
 
     return {
       direction: dir,
       detections,
-      avgWaitingTime:       rand(5, 120),
-      arrivalRate:          rand(2, 25),
+      avgWaitingTime: rand(5, 120),
+      arrivalRate: rand(2, 25),
       queueLength,
       roadCapacity,
-      hasBus:               bus > 0,
-      hasEmergencyVehicle:  false,  // EMV handled separately by pause/resume
-      lastGreenSeconds:     lastGreenTracker[dir as keyof typeof lastGreenTracker] ?? 0,
+      hasBus: bus > 0,
+      hasEmergencyVehicle: false, // EMV handled separately by pause/resume
+      lastGreenSeconds:
+        lastGreenTracker[dir as keyof typeof lastGreenTracker] ?? 0,
     };
   });
 }
 
 function generateMockDownstream(): DownstreamDensity[] {
-  return DIRECTIONS.map(dir => ({
+  return DIRECTIONS.map((dir) => ({
     direction: dir,
     occupancyPct: rand(10, 85),
   }));
@@ -103,7 +108,9 @@ function printCycle(plan: any, confidence: number) {
   const time = new Date().toLocaleTimeString();
 
   console.log("\n" + "═".repeat(60));
-  console.log(`  CYCLE #${cycleCount}  |  ${time}  |  Confidence: ${confidence}`);
+  console.log(
+    `  CYCLE #${cycleCount}  |  ${time}  |  Confidence: ${confidence}`,
+  );
   console.log("═".repeat(60));
 
   if (plan.dataSource === "EMV_OVERRIDE") {
@@ -128,22 +135,24 @@ function printCycle(plan: any, confidence: number) {
     const isWinner = dir === plan.winningDirection;
     const flag = isWinner ? " 🏆" : "";
     const spillback = plan.spillbackFlags[dir] ? " ⚠️SPILLBACK" : "";
-    const starved   = plan.starvationFlags[dir] ? " ⚠️STARVED" : "";
-    console.log(`    ${dir.padEnd(8)}: ${score.toFixed(1)}${flag}${spillback}${starved}`);
+    const starved = plan.starvationFlags[dir] ? " ⚠️STARVED" : "";
+    console.log(
+      `    ${dir.padEnd(8)}: ${score.toFixed(1)}${flag}${spillback}${starved}`,
+    );
   });
 }
 
 function runOneCycle() {
-  const approaches  = generateMockApproaches();
-  const downstream  = generateMockDownstream();
-  const confidence  = generateMockConfidence();
+  const approaches = generateMockApproaches();
+  const downstream = generateMockDownstream();
+  const confidence = generateMockConfidence();
 
   const plan = runMaxPressureOptimizer(
     JUNCTION_ID,
     approaches,
     downstream,
     currentPhase,
-    confidence
+    confidence,
   );
 
   printCycle(plan, confidence);
