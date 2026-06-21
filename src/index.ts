@@ -389,8 +389,7 @@ const normalOpposing = safetyValidator.validateProposedActuation(
 );
 assert(
   "Control: without EMV, opposing-phase jump → FORCE_FALLBACK",
-  !normalOpposing.isSafe &&
-    normalOpposing.command.action === "FORCE_FALLBACK",
+  !normalOpposing.isSafe && normalOpposing.command.action === "FORCE_FALLBACK",
   normalOpposing.command.action,
 );
 
@@ -407,7 +406,9 @@ assert(
   emvHardConflict.command.action,
 );
 
-console.log("\n🚨 Fix #2 — Green corridor granted despite phase conflict (end-to-end):");
+console.log(
+  "\n🚨 Fix #2 — Green corridor granted despite phase conflict (end-to-end):",
+);
 const emvOrchestrator = new STMOrchestrator(orchestratorConfig);
 const emvData = generator.getLayer2Data(0.9);
 const emvConflictToken = {
@@ -440,11 +441,7 @@ const mpCurrentPhase: PhaseState = {
   currentDensity: "medium",
 };
 
-function mkApproach(
-  dir: string,
-  cars: number,
-  lastGreen = 0,
-): ApproachMetrics {
+function mkApproach(dir: string, cars: number, lastGreen = 0): ApproachMetrics {
   return {
     direction: dir,
     detections: [{ type: "Car", count: cars }],
@@ -469,7 +466,12 @@ const mpDownstream: DownstreamDensity[] = [
 // WEST is lower priority but its downstream is clear. WEST must win now.
 const mpPlan = runMaxPressureOptimizer(
   "MP_TEST",
-  [mkApproach("NORTH", 5), mkApproach("SOUTH", 5), mkApproach("EAST", 100), mkApproach("WEST", 60)],
+  [
+    mkApproach("NORTH", 5),
+    mkApproach("SOUTH", 5),
+    mkApproach("EAST", 100),
+    mkApproach("WEST", 60),
+  ],
   mpDownstream,
   mpCurrentPhase,
   0.9,
@@ -484,7 +486,12 @@ assert(
 // but must still win because starvation bypasses the downstream damping.
 const mpStarvedPlan = runMaxPressureOptimizer(
   "MP_STARVE_TEST",
-  [mkApproach("NORTH", 5), mkApproach("SOUTH", 5), mkApproach("EAST", 50, 60), mkApproach("WEST", 60)],
+  [
+    mkApproach("NORTH", 5),
+    mkApproach("SOUTH", 5),
+    mkApproach("EAST", 50, 60),
+    mkApproach("WEST", 60),
+  ],
   mpDownstream,
   mpCurrentPhase,
   0.9,
