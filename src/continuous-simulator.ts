@@ -8,13 +8,12 @@
 
 import {
   DownstreamDensity,
+  MaxPressureOptimizer,
   PhaseState,
-  pauseOptimizer,
-  resumeOptimizer,
-  runMaxPressureOptimizer,
 } from "./max-pressure-optimizer";
 import { ApproachMetrics, VehicleType } from "./types/types";
 
+const optimizer = new MaxPressureOptimizer();
 const JUNCTION_ID = "JN-042";
 const CYCLE_SECONDS = 8;
 const DIRECTIONS = ["NORTH", "SOUTH", "EAST", "WEST"];
@@ -145,7 +144,7 @@ function runOneCycle() {
   const downstream = generateMockDownstream();
   const confidence = generateMockConfidence();
 
-  const plan = runMaxPressureOptimizer(
+  const plan = optimizer.run(
     JUNCTION_ID,
     approaches,
     downstream,
@@ -181,10 +180,10 @@ setInterval(runOneCycle, CYCLE_SECONDS * 1000);
 // independently of normal vehicle scoring above
 setTimeout(() => {
   console.log("\n🚨🚨🚨 SIMULATING EMERGENCY CORRIDOR EVENT 🚨🚨🚨");
-  pauseOptimizer(JUNCTION_ID);
+  optimizer.pause(JUNCTION_ID);
 
   setTimeout(() => {
     console.log("\n✅ EMERGENCY CORRIDOR ENDED — Resuming normal operation\n");
-    resumeOptimizer(JUNCTION_ID);
+    optimizer.resume(JUNCTION_ID);
   }, 15000);
 }, 30000);

@@ -57,8 +57,12 @@ export class SafetySupervisor {
     currentState: CurrentState,
     proposedState: ProposedState,
     activeTimers: ActiveTimers,
+    options: { emergencyOverride?: boolean } = {},
   ): SafetyValidationResult {
+    const emergencyOverride = options.emergencyOverride ?? false;
+
     // Rule 1: Prevent Conflicting Greens Invariant
+    // HARD physical interlock — enforced even under emergency preemption.
     for (const phaseA of proposedState.activeGreens) {
       const conflicts = this.config.conflictMatrix[phaseA] || [];
       for (const phaseB of proposedState.activeGreens) {
@@ -78,7 +82,14 @@ export class SafetySupervisor {
       // Verify proposed phase doesn't conflict with currently active phase
       const activePhaseConflicts =
         this.config.conflictMatrix[currentState.phaseId] || [];
-      if (activePhaseConflicts.includes(proposedState.phaseId)) {
+
+      // A direct jump between opposing phases is unsafe — unless an EMV
+      // preemption is in force, in which case we still grant the transition
+      // and rely on the clearance intervals below to drain the conflict.
+      if (
+        activePhaseConflicts.includes(proposedState.phaseId) &&
+        !emergencyOverride
+      ) {
         return {
           isSafe: false,
           command: this.forceSafeDefault(
@@ -87,8 +98,12 @@ export class SafetySupervisor {
         };
       }
 
-      // Block premature cutoff from hyper-aggressive optimization requests
-      if (activeTimers.currentPhaseDuration < this.config.minGreenEnforced) {
+      // Block premature cutoff from hyper-aggressive optimization requests.
+      // Emergency preemption overrides the minimum-green dwell time.
+      if (
+        activeTimers.currentPhaseDuration < this.config.minGreenEnforced &&
+        !emergencyOverride
+      ) {
         return {
           isSafe: false,
           command: this.maintainCurrentState(
@@ -98,7 +113,9 @@ export class SafetySupervisor {
         };
       }
 
-      // Insert deterministic clearance delays (Yellow & All-Red)
+      // Insert deterministic clearance delays (Yellow & All-Red).
+      // These are ALWAYS applied — including emergency preemption — so opposing
+      // traffic is brought to a safe stop before the corridor phase goes green.
       return {
         isSafe: true, // The transition is safe, but we MUST inject clearances
         command: {
@@ -112,12 +129,15 @@ export class SafetySupervisor {
             proposedState.allRedSeconds || 0,
             this.config.minAllRedSeconds,
           ),
+          ...(emergencyOverride ? { reason: "EMERGENCY_PREEMPTION" } : {}),
         },
       };
     }
 
     // Rule 3: Pedestrian Phase Protection Integrity
-    if (currentState.pedestrianWalkActive) {
+    // Held for the minimum walk time, unless an EMV preemption overrides it
+    // (the clearance intervals above still protect pedestrians mid-crossing).
+    if (currentState.pedestrianWalkActive && !emergencyOverride) {
       if (
         activeTimers.pedestrianWalkDuration <
         this.config.minPedestrianWalkSeconds

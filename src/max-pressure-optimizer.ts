@@ -58,28 +58,18 @@ const ALL_RED_TIME = 2;
 const SCALING_FACTOR = 1.5;
 const EXTENSION_SEC = 10;
 const CONF_THRESHOLD = 0.7;
+// Floor for the downstream-availability multiplier so a fully saturated
+// downstream never drops a non-starved approach's pressure to absolute zero.
+const DOWNSTREAM_AVAILABILITY_FLOOR = 0.1;
 const DEFAULT_HISTORICAL_GREEN = 30;
 
-// ─── EMV Pause/Resume System ─────────────────────────────────
-const pausedJunctions = new Set<string>();
-
-export function pauseOptimizer(junctionId: string): void {
-  pausedJunctions.add(junctionId);
-  console.log(
-    `[PAUSED] Junction ${junctionId} — EMV corridor active. ` +
-      `Normal optimizer suspended.`,
-  );
-}
-
-export function resumeOptimizer(junctionId: string): void {
-  pausedJunctions.delete(junctionId);
-  console.log(
-    `[RESUMED] Junction ${junctionId} — returning to normal mode. ` +
-      `Max-pressure recovery begins automatically.`,
-  );
-}
-
-// ─── Pressure Calculation ─────────────────────────────────────
+// ─── Pressure Calculation (True Max-Pressure) ─────────────────
+// Classic max-pressure releases the movement whose upstream demand is high
+// AND whose downstream can actually absorb it. We scale the (large, composite)
+// upstream priority score by a normalised downstream-availability factor in
+// [0,1], so a jammed downstream suppresses release and prevents spillback —
+// instead of subtracting a raw occupancy percentage that barely moved the
+// ranking. Starved approaches bypass the damping so they are eventually served.
 function calculatePressure(
   scored: ScoredApproach,
   downstream: DownstreamDensity[],
@@ -87,8 +77,19 @@ function calculatePressure(
   const ds = downstream.find(
     (d) => d.direction.toUpperCase() === scored.direction,
   );
-  const downstreamDemand = ds ? ds.occupancyPct : 0;
-  return scored.priorityScore - downstreamDemand;
+  const downstreamOccupancyPct = ds ? ds.occupancyPct : 0;
+
+  // Normalise occupancy (0–100%) into available headroom (1 = empty, 0 = full).
+  const availability = Math.max(
+    0,
+    Math.min(1, 1 - downstreamOccupancyPct / 100),
+  );
+
+  const factor = scored.starvationOverride
+    ? 1
+    : Math.max(DOWNSTREAM_AVAILABILITY_FLOOR, availability);
+
+  return scored.priorityScore * factor;
 }
 
 // ─── Green Time Calculation ───────────────────────────────────
@@ -162,12 +163,7 @@ export function runMaxPressureOptimizer(
   confidenceScore: number,
   historicalGreenTime?: number,
 ): ProposedPlan {
-  // ─── Check 1: EMV Override ──────────────────────────────
-  if (pausedJunctions.has(junctionId)) {
-    return buildEMVOverridePlan(junctionId);
-  }
-
-  // ─── Check 2: Confidence Gate ───────────────────────────
+  // ─── Confidence Gate ────────────────────────────────────
   if (confidenceScore < CONF_THRESHOLD) {
     return buildHistoricalFallback(junctionId, historicalGreenTime);
   }
@@ -246,4 +242,61 @@ export function runMaxPressureOptimizer(
     extendGreen,
     winningDirection: winningDir,
   };
+}
+
+// ─── EMV Pause/Resume System (per-instance, no shared global state) ───────────
+// Each controller owns its own pause registry, so an EMV corridor at one
+// junction can never leak into another junction handled by a different
+// optimizer instance (or a later run that reuses the same junction id).
+export class MaxPressureOptimizer {
+  private readonly pausedJunctions = new Set<string>();
+
+  /** Suspend normal optimization for a junction while an EMV corridor is active. */
+  public pause(junctionId: string): void {
+    this.pausedJunctions.add(junctionId);
+    console.log(
+      `[PAUSED] Junction ${junctionId} — EMV corridor active. ` +
+        `Normal optimizer suspended.`,
+    );
+  }
+
+  /** Resume normal max-pressure optimization once the corridor has cleared. */
+  public resume(junctionId: string): void {
+    this.pausedJunctions.delete(junctionId);
+    console.log(
+      `[RESUMED] Junction ${junctionId} — returning to normal mode. ` +
+        `Max-pressure recovery begins automatically.`,
+    );
+  }
+
+  /** Whether a junction is currently paused for an EMV corridor. */
+  public isPaused(junctionId: string): boolean {
+    return this.pausedJunctions.has(junctionId);
+  }
+
+  /**
+   * Runs the optimizer for a junction. While paused for an EMV corridor it
+   * yields a control-handoff plan; otherwise it delegates to the pure,
+   * stateless max-pressure computation.
+   */
+  public run(
+    junctionId: string,
+    approaches: ApproachMetrics[],
+    downstream: DownstreamDensity[],
+    currentPhase: PhaseState,
+    confidenceScore: number,
+    historicalGreenTime?: number,
+  ): ProposedPlan {
+    if (this.pausedJunctions.has(junctionId)) {
+      return buildEMVOverridePlan(junctionId);
+    }
+    return runMaxPressureOptimizer(
+      junctionId,
+      approaches,
+      downstream,
+      currentPhase,
+      confidenceScore,
+      historicalGreenTime,
+    );
+  }
 }

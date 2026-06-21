@@ -10,11 +10,9 @@ import {
 } from "./config";
 import {
   DownstreamDensity,
+  MaxPressureOptimizer,
   PhaseState,
   ProposedPlan,
-  pauseOptimizer,
-  resumeOptimizer,
-  runMaxPressureOptimizer,
 } from "./max-pressure-optimizer";
 import { ConfidenceThresholds, ResilienceHandler } from "./resilience-handler";
 import { SafetyConfig, SafetySupervisor } from "./safety-supervisor";
@@ -62,6 +60,7 @@ export interface OrchestratorResult {
 export class STMOrchestrator {
   private safetyValidator: SafetySupervisor;
   private resilienceHandler: ResilienceHandler;
+  private optimizer: MaxPressureOptimizer;
   private config: OrchestratorConfig;
   private lastValidTimestamp: string;
   private currentPhaseState: PhaseState;
@@ -72,11 +71,15 @@ export class STMOrchestrator {
     this.config = config;
     this.safetyValidator = new SafetySupervisor(config.safetyConfig);
     this.resilienceHandler = new ResilienceHandler(config.resilienceThresholds);
+    this.optimizer = new MaxPressureOptimizer();
     this.lastValidTimestamp = new Date().toISOString();
-    // Initialize phase state for Member 2
+    // Initialize phase state for Member 2.
+    // Assume the junction was already running NORTH for a full cycle before the
+    // controller booted, so the first optimisation can transition cleanly
+    // without tripping the minimum-green interlock.
     this.currentPhaseState = {
       currentPhaseId: "PHASE_NORTH_GREEN",
-      phaseElapsedSeconds: 0,
+      phaseElapsedSeconds: CYCLE_SECONDS,
       currentGreenDuration: 30,
       currentDensity: "medium",
     };
@@ -99,6 +102,18 @@ export class STMOrchestrator {
   ): OrchestratorResult {
     const reasonChain: string[] = [];
     const commandId = `CMD-${Date.now()}`;
+
+    // ===== STAGE 0: EMV Corridor Reconciliation =====
+    // Tear the corridor down up-front whenever there is no emergency this cycle,
+    // so it is always cleaned up — even when the pipeline later short-circuits
+    // to a fallback (stale data / low confidence) before reaching the optimiser.
+    // Without this, a corridor opened in a prior cycle would stay "active"
+    // indefinitely across fallback cycles.
+    if (!emergencyToken && this.emvCorridorActive) {
+      this.optimizer.resume(layer2Data.junctionId);
+      this.emvCorridorActive = false;
+      reasonChain.push(`EMV corridor ended — resuming normal optimization`);
+    }
 
     // ===== STAGE 1: Data Staleness Check =====
     const dataAge = this.calculateDataAgeSeconds(layer2Data.timestamp);
@@ -161,39 +176,31 @@ export class STMOrchestrator {
     let selectedProposal: OptimizationProposal | EmergencyResponse | null =
       null;
     let executionPath = "NORMAL_MODE";
+    // Holds the live optimiser plan so the phase-state mutation can be deferred
+    // until AFTER Member 3 approves the transition (see Stage 4).
+    let pendingPlan: ProposedPlan | null = null;
 
     if (emergencyToken) {
       if (!this.emvCorridorActive) {
-        pauseOptimizer(layer2Data.junctionId);
+        this.optimizer.pause(layer2Data.junctionId);
         this.emvCorridorActive = true;
       }
       reasonChain.push(`Emergency detected: ${emergencyToken.emvId}`);
       selectedProposal = this.generateEmergencyResponse(emergencyToken);
       executionPath = "EMERGENCY_MODE";
-      this.currentPhaseState = {
-        currentPhaseId: `PHASE_${emergencyToken.targetPhaseId}_GREEN`,
-        phaseElapsedSeconds: 0,
-        currentGreenDuration: selectedProposal.requiredGreenDuration,
-        currentDensity: "high",
-      };
-      this.lastGreenTracker[emergencyToken.targetPhaseId] = 0;
       reasonChain.push(
         `Using EMERGENCY_MODE with phase ${emergencyToken.targetPhaseId} (conflict index: ${selectedProposal.conflictIndex})`,
       );
     } else {
-      if (this.emvCorridorActive) {
-        resumeOptimizer(layer2Data.junctionId);
-        this.emvCorridorActive = false;
-        reasonChain.push(`EMV corridor ended — resuming normal optimization`);
-      }
-
+      // EMV corridor teardown is handled up-front in Stage 0, so by here the
+      // corridor is already inactive on a non-emergency cycle.
       reasonChain.push(`Calling Member 2 (Max-Pressure Optimizer)`);
 
       const approachMetrics = this.convertLayer2ToApproachMetrics(layer2Data);
       const downstreamDensity = this.generateDownstreamDensity(layer2Data);
       const historicalGreen = this.getHistoricalGreenTime(historicalPlans);
 
-      const optimizedPlan = runMaxPressureOptimizer(
+      const optimizedPlan = this.optimizer.run(
         layer2Data.junctionId,
         approachMetrics,
         downstreamDensity,
@@ -207,8 +214,8 @@ export class STMOrchestrator {
       );
       selectedProposal = this.convertProposedPlanToOptimization(optimizedPlan);
 
-      // Update phase state for next cycle
-      this.updatePhaseState(optimizedPlan);
+      // Defer the phase-state update until Member 3 (safety) approves it.
+      pendingPlan = optimizedPlan;
     }
 
     // ===== STAGE 4: Safety Validation (Member 3 Entry Point) =====
@@ -240,6 +247,7 @@ export class STMOrchestrator {
       currentState,
       proposedState,
       activeTimers,
+      { emergencyOverride: executionPath === "EMERGENCY_MODE" },
     );
 
     reasonChain.push(
@@ -249,6 +257,7 @@ export class STMOrchestrator {
     );
 
     if (!safetyResult.isSafe) {
+      // Hard interlock violation (e.g. conflicting greens) → safe default.
       if (safetyResult.command.action === "FORCE_FALLBACK") {
         reasonChain.push(
           `Safety override: Forcing fallback - ${safetyResult.command.reason}`,
@@ -262,6 +271,38 @@ export class STMOrchestrator {
           resilienceDecision.confidenceScore,
         );
       }
+
+      // Soft interlock (min-green not met / pedestrian walk active) → the
+      // supervisor refuses the transition and orders us to HOLD the current
+      // phase. Previously this verdict was dropped and the premature switch
+      // executed anyway; now we honour it.
+      if (safetyResult.command.action === "MAINTAIN_CURRENT_STATE") {
+        reasonChain.push(
+          `Safety hold: keeping ${currentDirection} green - ${safetyResult.command.reason}`,
+        );
+        return this.produceHoldCommand(
+          commandId,
+          layer2Data.junctionId,
+          currentDirection,
+          executionPath,
+          resilienceDecision.confidenceScore,
+          reasonChain,
+        );
+      }
+    }
+
+    // Safety approved the plan — NOW commit the deferred phase-state transition.
+    if (executionPath === "EMERGENCY_MODE" && emergencyToken) {
+      this.currentPhaseState = {
+        currentPhaseId: `PHASE_${emergencyToken.targetPhaseId}_GREEN`,
+        phaseElapsedSeconds: 0,
+        currentGreenDuration: (selectedProposal as EmergencyResponse)
+          .requiredGreenDuration,
+        currentDensity: "high",
+      };
+      this.lastGreenTracker[emergencyToken.targetPhaseId] = 0;
+    } else if (pendingPlan) {
+      this.updatePhaseState(pendingPlan);
     }
 
     // ===== STAGE 5: Build Final Actuation Command =====
@@ -344,6 +385,52 @@ export class STMOrchestrator {
     return {
       finalCommand: command,
       executionPath: "FALLBACK_MODE",
+      safetyValidationPassed: true,
+      confidenceScore,
+      reasonChain,
+    };
+  }
+
+  /**
+   * Holds the current phase green when Member 3 refuses a transition
+   * (minimum-green not yet satisfied, or a pedestrian walk is active).
+   * This is the enforced-safe outcome of a soft interlock.
+   */
+  private produceHoldCommand(
+    commandId: string,
+    junctionId: string,
+    holdDirection: string,
+    executionPath: string,
+    confidenceScore: number,
+    reasonChain: string[],
+  ): OrchestratorResult {
+    // The current phase continues, so advance its elapsed-green timer.
+    this.currentPhaseState = {
+      ...this.currentPhaseState,
+      phaseElapsedSeconds:
+        this.currentPhaseState.phaseElapsedSeconds + CYCLE_SECONDS,
+    };
+
+    const heldDuration = Math.max(
+      this.currentPhaseState.currentGreenDuration,
+      this.config.safetyConfig.minGreenEnforced,
+    );
+
+    const command: ActuationCommand = {
+      junctionId,
+      commandId,
+      targetPhaseId: holdDirection,
+      durationSeconds: heldDuration,
+      clearanceIntervals: {
+        yellowSeconds: MIN_YELLOW_SECONDS,
+        allRedSeconds: 2,
+      },
+      executionMode: "NORMAL_MAX_PRESSURE",
+    };
+
+    return {
+      finalCommand: command,
+      executionPath,
       safetyValidationPassed: true,
       confidenceScore,
       reasonChain,
@@ -434,9 +521,12 @@ export class STMOrchestrator {
 
     this.currentPhaseState = {
       currentPhaseId: plan.targetPhaseId,
+      // On a fresh transition the new phase will already have been green for one
+      // cycle by the next decision, so seed it with CYCLE_SECONDS rather than 0
+      // (otherwise the minimum-green interlock would spuriously fire next cycle).
       phaseElapsedSeconds: samePhase
         ? this.currentPhaseState.phaseElapsedSeconds + CYCLE_SECONDS
-        : 0,
+        : CYCLE_SECONDS,
       currentGreenDuration: plan.greenDuration,
       currentDensity: density,
     };
@@ -495,6 +585,7 @@ export class STMOrchestrator {
   public getOrchestrationState() {
     return {
       resilience: this.resilienceHandler.getState(),
+      emvCorridorActive: this.emvCorridorActive,
       lastValidTimestamp: this.lastValidTimestamp,
     };
   }
