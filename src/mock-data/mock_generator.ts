@@ -1,16 +1,22 @@
-// mock-generator.ts
+// mock-generator.ts — Mock Layer 2 cameras, historical DB, and EMVS dispatch
 import type {
-    ApproachData,
-    EmergencyToken,
-    Layer2Payload,
+  ApproachData,
+  EmergencyToken,
+  Layer2Payload,
+  PriorityClass,
 } from "../types/types";
 import { VEHICLE_WEIGHTS } from "../types/types";
 
+const PHASES = ["NORTH", "SOUTH", "EAST", "WEST"] as const;
+const PRIORITY_CLASSES: PriorityClass[] = ["CRITICAL", "HIGH", "NORMAL"];
+
 export class MockDataGenerator {
+  private activeEmergency: EmergencyToken | null = null;
+  private corridorEndTime: number | null = null;
+
   private generateRandomDetections() {
     return Object.keys(VEHICLE_WEIGHTS).map((type) => ({
       type: type as keyof typeof VEHICLE_WEIGHTS,
-      // Randomly generate between 0 and 15 vehicles per type
       count: Math.floor(Math.random() * 15),
     }));
   }
@@ -20,31 +26,68 @@ export class MockDataGenerator {
   ): ApproachData {
     return {
       approachId,
-      spatialOccupancyPct: Math.floor(Math.random() * 90) + 10, // 10% to 100%
+      spatialOccupancyPct: Math.floor(Math.random() * 90) + 10,
       detections: this.generateRandomDetections(),
-      waitingTimeSeconds: Math.floor(Math.random() * 120), // 0 to 120s
-      arrivalRatePerMin: Math.floor(Math.random() * 30), // 0 to 30 cars/min
+      waitingTimeSeconds: Math.floor(Math.random() * 120),
+      arrivalRatePerMin: Math.floor(Math.random() * 30),
     };
   }
 
-  // Change this to true to test Member 3 & Member 4's Emergency Logic
+  /** Mock 3: inject Active Emergency Token (20% chance per cycle when no corridor active) */
   public triggerEmergency(): EmergencyToken | null {
-    const isEmergency = Math.random() > 0.8; // 20% chance of emergency
-    if (!isEmergency) return null;
+    const now = Date.now();
 
-    return {
+    if (this.activeEmergency && this.corridorEndTime && now < this.corridorEndTime) {
+      return this.activeEmergency;
+    }
+
+    if (this.activeEmergency) {
+      this.endEmergencyCorridor();
+      return null;
+    }
+
+    if (Math.random() <= 0.8) return null;
+
+    const etaSeconds = Math.floor(Math.random() * 60) + 10;
+    const targetPhaseId =
+      PHASES[Math.floor(Math.random() * PHASES.length)] ?? "NORTH";
+    const priorityClass =
+      PRIORITY_CLASSES[Math.floor(Math.random() * PRIORITY_CLASSES.length)] ??
+      "CRITICAL";
+
+    this.activeEmergency = {
       emvId: `AMB-${Math.floor(Math.random() * 9999)}`,
-      priorityClass: "CRITICAL",
-      etaSeconds: Math.floor(Math.random() * 60) + 10, // 10s to 70s away
+      priorityClass,
+      etaSeconds,
       cryptographicToken: "0xVALID_MOCK_TOKEN",
-      targetPhaseId: "NORTH",
+      targetPhaseId,
     };
+    this.corridorEndTime = now + etaSeconds * 1000;
+
+    return this.activeEmergency;
+  }
+
+  public isCorridorActive(): boolean {
+    return (
+      this.activeEmergency !== null &&
+      this.corridorEndTime !== null &&
+      Date.now() < this.corridorEndTime
+    );
+  }
+
+  public endEmergencyCorridor(): void {
+    if (this.activeEmergency) {
+      console.log(
+        `[EMVS] Corridor ended for ${this.activeEmergency.emvId} — resuming normal traffic`,
+      );
+    }
+    this.activeEmergency = null;
+    this.corridorEndTime = null;
   }
 
   public getLayer2Data(overrideConfidence?: number): Layer2Payload {
-    // If no override provided, randomly vary confidence to test both scenarios
-    // ~50% of the time will be below 0.70 to trigger Member 4 hijack logic
-    let simulatedConfidence = overrideConfidence ?? (Math.random() < 0.5 ? 0.65 : 0.88);
+    const simulatedConfidence =
+      overrideConfidence ?? (Math.random() < 0.5 ? 0.65 : 0.88);
 
     return {
       junctionId: "DEL_DL_ITO_01",
@@ -59,6 +102,7 @@ export class MockDataGenerator {
     };
   }
 
+  /** Mock 2: average Tuesday traffic timings for resilience fallback */
   public getHistoricalData() {
     return [
       { phaseId: "NORTH", recommendedGreenTime: 45, historicalDemand: 60 },

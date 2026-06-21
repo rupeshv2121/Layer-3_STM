@@ -4,17 +4,33 @@
 
 // This file acts as the central nervous system for your entire traffic management engine. It perfectly encapsulates the "Decide" and "Guard" flow we established, explicitly wiring together the work of your 4-to-5 team members into a single, cohesive 30-second execution loop.
 
-import { PhaseState, runMaxPressureOptimizer } from "./max-pressure-optimizer";
+import {
+  MIN_YELLOW_SECONDS,
+  PIPELINE_CYCLE_SECONDS,
+} from "./config";
+import {
+  DownstreamDensity,
+  PhaseState,
+  ProposedPlan,
+  pauseOptimizer,
+  resumeOptimizer,
+  runMaxPressureOptimizer,
+} from "./max-pressure-optimizer";
 import { ConfidenceThresholds, ResilienceHandler } from "./resilience-handler";
 import { SafetyConfig, SafetySupervisor } from "./safety-supervisor";
 import {
   ActuationCommand,
+  ApproachMetrics,
   EmergencyResponse,
   EmergencyToken,
   HistoricalTimingPlan,
   Layer2Payload,
   OptimizationProposal,
+  PRIORITY_CLASS_MULTIPLIER,
 } from "./types/types";
+
+const CYCLE_SECONDS = PIPELINE_CYCLE_SECONDS;
+const ROAD_CAPACITY = 100;
 
 export interface OrchestratorConfig {
   safetyConfig: SafetyConfig;
@@ -48,8 +64,9 @@ export class STMOrchestrator {
   private resilienceHandler: ResilienceHandler;
   private config: OrchestratorConfig;
   private lastValidTimestamp: string;
-  private currentPhaseState: PhaseState; // Track current phase for Member 2
-  private lastGreenTracker: Record<string, number>; // Track seconds since last green
+  private currentPhaseState: PhaseState;
+  private lastGreenTracker: Record<string, number>;
+  private emvCorridorActive: boolean;
 
   constructor(config: OrchestratorConfig) {
     this.config = config;
@@ -69,6 +86,7 @@ export class STMOrchestrator {
       EAST: 0,
       WEST: 0,
     };
+    this.emvCorridorActive = false;
   }
 
   /**
@@ -138,30 +156,40 @@ export class STMOrchestrator {
     }
 
     // ===== STAGE 3: Optimization Decision =====
-    // Decide between Normal Mode (Member 1) or Emergency Mode (Member 2)
+    this.tickLastGreenTracker();
 
     let selectedProposal: OptimizationProposal | EmergencyResponse | null =
       null;
     let executionPath = "NORMAL_MODE";
 
-    // Check if emergency has higher priority
     if (emergencyToken) {
+      if (!this.emvCorridorActive) {
+        pauseOptimizer(layer2Data.junctionId);
+        this.emvCorridorActive = true;
+      }
       reasonChain.push(`Emergency detected: ${emergencyToken.emvId}`);
-      // TODO: Member 2 will implement this - for now, we'll use a placeholder
       selectedProposal = this.generateEmergencyResponse(emergencyToken);
       executionPath = "EMERGENCY_MODE";
+      this.currentPhaseState = {
+        currentPhaseId: `PHASE_${emergencyToken.targetPhaseId}_GREEN`,
+        phaseElapsedSeconds: 0,
+        currentGreenDuration: selectedProposal.requiredGreenDuration,
+        currentDensity: "high",
+      };
+      this.lastGreenTracker[emergencyToken.targetPhaseId] = 0;
       reasonChain.push(
-        `Using EMERGENCY_MODE with phase ${emergencyToken.targetPhaseId}`,
+        `Using EMERGENCY_MODE with phase ${emergencyToken.targetPhaseId} (conflict index: ${selectedProposal.conflictIndex})`,
       );
     } else {
-      // ===== MEMBER 1 & 2: Normal-Mode Optimization =====
-      // Call Member 2 (runMaxPressureOptimizer), which internally calls Member 1 (scoreAllApproaches)
+      if (this.emvCorridorActive) {
+        resumeOptimizer(layer2Data.junctionId);
+        this.emvCorridorActive = false;
+        reasonChain.push(`EMV corridor ended — resuming normal optimization`);
+      }
+
       reasonChain.push(`Calling Member 2 (Max-Pressure Optimizer)`);
 
-      const approachMetrics = this.convertLayer2ToApproachMetrics(
-        layer2Data,
-        resilienceDecision.confidenceScore,
-      );
+      const approachMetrics = this.convertLayer2ToApproachMetrics(layer2Data);
       const downstreamDensity = this.generateDownstreamDensity(layer2Data);
       const historicalGreen = this.getHistoricalGreenTime(historicalPlans);
 
@@ -184,27 +212,28 @@ export class STMOrchestrator {
     }
 
     // ===== STAGE 4: Safety Validation (Member 3 Entry Point) =====
+    const currentDirection = this.extractDirectionFromPhaseId(
+      this.currentPhaseState.currentPhaseId,
+    );
+    const proposedDirection =
+      "targetPhaseId" in selectedProposal
+        ? selectedProposal.targetPhaseId
+        : selectedProposal.approachId;
+
     const currentState = {
-      phaseId: "CURRENT_PHASE", // In real system, track current phase
-      activeGreens: ["CURRENT_PHASE"],
+      phaseId: currentDirection,
+      activeGreens: [currentDirection],
       pedestrianWalkActive: false,
     };
 
     const activeTimers = {
-      currentPhaseDuration: 10, // Placeholder
+      currentPhaseDuration: this.currentPhaseState.phaseElapsedSeconds,
       pedestrianWalkDuration: 0,
     };
 
     const proposedState = {
-      phaseId:
-        "targetPhaseId" in selectedProposal
-          ? selectedProposal.targetPhaseId
-          : selectedProposal.approachId,
-      activeGreens: [
-        "targetPhaseId" in selectedProposal
-          ? selectedProposal.targetPhaseId
-          : selectedProposal.approachId,
-      ],
+      phaseId: proposedDirection,
+      activeGreens: [proposedDirection],
     };
 
     const safetyResult = this.safetyValidator.validateProposedActuation(
@@ -252,7 +281,7 @@ export class STMOrchestrator {
       targetPhaseId: targetPhase,
       durationSeconds: proposedDuration,
       clearanceIntervals: {
-        yellowSeconds: safetyResult.command.yellowSeconds || 3,
+        yellowSeconds: safetyResult.command.yellowSeconds || MIN_YELLOW_SECONDS,
         allRedSeconds: safetyResult.command.allRedSeconds || 2,
       },
       executionMode:
@@ -305,7 +334,7 @@ export class STMOrchestrator {
       targetPhaseId: fallbackPhase.phaseId,
       durationSeconds: fallbackPhase.recommendedGreenTime,
       clearanceIntervals: {
-        yellowSeconds: 3,
+        yellowSeconds: MIN_YELLOW_SECONDS,
         allRedSeconds: 2,
       },
       executionMode:
@@ -321,63 +350,131 @@ export class STMOrchestrator {
     };
   }
 
-  /**
-   * Placeholder for Member 1's optimization logic
-   * In real implementation, Member 1 will provide:
-   * - Person-centric weighted vehicle counts
-   * - Priority Score calculation
-   * - Max-Pressure formula application
-   */
-  private generateNormalModeProposal(
+  private convertLayer2ToApproachMetrics(
     layer2Data: Layer2Payload,
-  ): OptimizationProposal {
-    // TODO: Replace with actual Member 1 implementation
-    // For now, just propose the approach with highest occupancy
-    const approaches = layer2Data.approaches;
-    const maxApproach = approaches.reduce((prev, current) =>
-      current.spatialOccupancyPct > prev.spatialOccupancyPct ? current : prev,
+  ): ApproachMetrics[] {
+    return layer2Data.approaches.map((approach) => {
+      const totalVehicles = approach.detections.reduce(
+        (sum, d) => sum + d.count,
+        0,
+      );
+      const queueLength = Math.min(
+        Math.round((approach.spatialOccupancyPct / 100) * ROAD_CAPACITY) ||
+          totalVehicles,
+        ROAD_CAPACITY,
+      );
+
+      return {
+        direction: approach.approachId,
+        detections: approach.detections,
+        avgWaitingTime: approach.waitingTimeSeconds,
+        arrivalRate: approach.arrivalRatePerMin,
+        queueLength,
+        roadCapacity: ROAD_CAPACITY,
+        hasBus: approach.detections.some((d) => d.type === "Bus" && d.count > 0),
+        hasEmergencyVehicle: approach.detections.some(
+          (d) => d.type === "Ambulance" && d.count > 0,
+        ),
+        lastGreenSeconds: this.lastGreenTracker[approach.approachId] ?? 0,
+      };
+    });
+  }
+
+  private generateDownstreamDensity(
+    layer2Data: Layer2Payload,
+  ): DownstreamDensity[] {
+    return layer2Data.approaches.map((approach) => ({
+      direction: approach.approachId,
+      occupancyPct: approach.spatialOccupancyPct,
+    }));
+  }
+
+  private getHistoricalGreenTime(
+    historicalPlans: HistoricalTimingPlan[],
+  ): number {
+    if (historicalPlans.length === 0) return 30;
+    const total = historicalPlans.reduce(
+      (sum, plan) => sum + plan.recommendedGreenTime,
+      0,
     );
+    return Math.round(total / historicalPlans.length);
+  }
+
+  private convertProposedPlanToOptimization(
+    plan: ProposedPlan,
+  ): OptimizationProposal {
+    const direction = (
+      ["NORTH", "SOUTH", "EAST", "WEST"].includes(plan.winningDirection)
+        ? plan.winningDirection
+        : (this.config.defaultPhaseIfNoProposal ?? "NORTH")
+    ) as "NORTH" | "SOUTH" | "EAST" | "WEST";
 
     return {
-      approachId: maxApproach.approachId,
-      priorityScore: maxApproach.spatialOccupancyPct, // Placeholder
-      proposedGreenTime: 45, // Placeholder
+      approachId: direction,
+      priorityScore: plan.priorityScores[direction] ?? 0,
+      proposedGreenTime: plan.greenDuration,
       method: "MAX_PRESSURE",
-      timestamp: new Date().toISOString(),
+      timestamp: plan.timestamp,
     };
   }
 
-  /**
-   * Placeholder for Member 2's emergency response logic
-   * In real implementation, Member 2 will provide:
-   * - Conflict Index: Priority Class * 100 - ETA
-   * - Green Corridor timing calculations
-   */
+  private updatePhaseState(plan: ProposedPlan): void {
+    if (plan.dataSource !== "LIVE") return;
+
+    this.lastGreenTracker[plan.winningDirection] = 0;
+
+    const samePhase =
+      this.currentPhaseState.currentPhaseId === plan.targetPhaseId;
+    const density: PhaseState["currentDensity"] =
+      plan.greenDuration >= 60
+        ? "high"
+        : plan.greenDuration >= 35
+          ? "medium"
+          : "low";
+
+    this.currentPhaseState = {
+      currentPhaseId: plan.targetPhaseId,
+      phaseElapsedSeconds: samePhase
+        ? this.currentPhaseState.phaseElapsedSeconds + CYCLE_SECONDS
+        : 0,
+      currentGreenDuration: plan.greenDuration,
+      currentDensity: density,
+    };
+  }
+
+  private tickLastGreenTracker(): void {
+    for (const dir of Object.keys(this.lastGreenTracker)) {
+      this.lastGreenTracker[dir] = (this.lastGreenTracker[dir] ?? 0) + CYCLE_SECONDS;
+    }
+  }
+
+  private extractDirectionFromPhaseId(phaseId: string): string {
+    const match = phaseId.match(/PHASE_(NORTH|SOUTH|EAST|WEST)_GREEN/);
+    if (match?.[1]) return match[1];
+    if (["NORTH", "SOUTH", "EAST", "WEST"].includes(phaseId)) return phaseId;
+    return this.config.defaultPhaseIfNoProposal ?? "NORTH";
+  }
+
   private generateEmergencyResponse(
     emergency: EmergencyToken,
   ): EmergencyResponse {
-    // TODO: Replace with actual Member 2 implementation
-    // For now, simple Conflict Index calculation
-    const priorityMultiplier =
-      emergency.priorityClass === "CRITICAL"
-        ? 3
-        : emergency.priorityClass === "HIGH"
-          ? 2
-          : 1;
-
+    const priorityMultiplier = PRIORITY_CLASS_MULTIPLIER[emergency.priorityClass];
     const conflictIndex = priorityMultiplier * 100 - emergency.etaSeconds;
-    // Cast targetPhaseId to valid type (already validated in EmergencyToken)
     const phaseId = emergency.targetPhaseId as
       | "NORTH"
       | "SOUTH"
       | "EAST"
       | "WEST";
+    const requiredGreenDuration = Math.min(
+      90,
+      Math.max(30, emergency.etaSeconds + 25),
+    );
 
     return {
       emvId: emergency.emvId,
       targetPhaseId: phaseId,
       conflictIndex,
-      requiredGreenDuration: 60, // Placeholder: allocate sufficient time
+      requiredGreenDuration,
       executionUrgency: emergency.priorityClass,
       timestamp: new Date().toISOString(),
     };

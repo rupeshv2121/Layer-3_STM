@@ -1,11 +1,9 @@
 // ============================================================
-// continuous-simulator.ts
-// Simulates Layer 2 sending live camera data every few seconds
-// Runs the optimizer continuously — like a real junction
+// continuous-simulator.ts — DEV-ONLY standalone M1+M2 loop
 //
-// NOTE: Normal traffic simulation does NOT include ambulances.
-// Emergency corridors are simulated separately via
-// pauseOptimizer/resumeOptimizer — Member 3's domain.
+// ⚠️  This file bypasses the orchestrator and is for isolated
+//     optimizer debugging only. For the full Layer-3 pipeline
+//     (all 4 members), use: npm run dev  or  npm run test
 // ============================================================
 
 import {
@@ -15,7 +13,7 @@ import {
   resumeOptimizer,
   runMaxPressureOptimizer,
 } from "./max-pressure-optimizer";
-import { ApproachMetrics } from "./types/types";
+import { ApproachMetrics, VehicleType } from "./types/types";
 
 const JUNCTION_ID = "JN-042";
 const CYCLE_SECONDS = 8;
@@ -56,13 +54,13 @@ function generateMockApproaches(): ApproachMetrics[] {
     const bus = rand(0, 3);
     const heavy_truck = rand(0, 2);
 
-    const detections = [
-      { type: "motorcycle", count: motorcycle },
-      { type: "car", count: car },
-      { type: "auto_rickshaw", count: auto_rickshaw },
-      { type: "mini_truck", count: mini_truck },
-      { type: "bus", count: bus },
-      { type: "heavy_truck", count: heavy_truck },
+    const detections: ApproachMetrics["detections"] = [
+      { type: "Motorcycle" as VehicleType, count: motorcycle },
+      { type: "Car" as VehicleType, count: car },
+      { type: "AutoRickshaw" as VehicleType, count: auto_rickshaw },
+      { type: "MiniTruck" as VehicleType, count: mini_truck },
+      { type: "Bus" as VehicleType, count: bus },
+      { type: "HeavyTruck" as VehicleType, count: heavy_truck },
     ].filter((d) => d.count > 0);
 
     const totalVehicles =

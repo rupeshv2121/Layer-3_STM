@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts"
+    "dev": "ts-node src/main.ts",
+    "test": "ts-node src/index.ts",
+    "sim": "ts-node src/continuous-simulator.ts"
   },
   "repository": {
     "type": "git",

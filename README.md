@@ -18,39 +18,42 @@ The system is designed as a **4-member collaboration pipeline**:
 ```
 Layer 2 Data (Perception) 
     ↓
-Member 1: Normal-Mode Architect 
+Member 4: Confidence Gate (Resilience entry)
     ↓
-Member 2: Emergency Pathfinder 
+Member 1: Scoring (Normal-Mode Architect)
     ↓
-Member 3: Safety Supervisor (Invariant Guardian) 
+Member 2: Max-Pressure Optimizer + Emergency Pathfinder
     ↓
-Member 4: Data & Resilience Handler 
+Member 3: Safety Supervisor (Invariant Guardian)
     ↓
-Layer 4 (Hardware Actuation)
+Member 4: Resilience Enforcement
+    ↓
+Layer 4 (Hardware Actuation — console.log mock)
 ```
 
 ### Member Responsibilities
 
 | Member | File | Role | Status |
 |--------|------|------|--------|
-| **1** | `stm-orchestrator.ts` | Generate optimization proposals using Max-Pressure algorithm | ⏳ TODO |
-| **2** | `stm-orchestrator.ts` | Handle emergency vehicle (EMV) requests with Green Corridor logic | ⏳ TODO |
-| **3** | `safety-supervisor.ts` | ✅ Validate safety constraints & enforce clearance intervals | ✅ DONE |
-| **4** | `resilience-handler.ts` | ✅ Monitor confidence scores & hijack to fallback if needed | ✅ DONE |
+| **1** | `types/types.ts` | Person-centric scoring (`scoreAllApproaches`) | ✅ DONE |
+| **2** | `max-pressure-optimizer.ts` + `stm-orchestrator.ts` | Max-pressure optimizer + Green Corridor / Conflict Index | ✅ DONE |
+| **3** | `safety-supervisor.ts` | Validate safety constraints & enforce clearance intervals | ✅ DONE |
+| **4** | `resilience-handler.ts` | Monitor confidence scores & hijack to fallback if needed | ✅ DONE |
+| **Orchestrator** | `stm-orchestrator.ts` | Wires all members into a 30-second execution loop | ✅ DONE |
 
 ---
 
 ## 📂 Project Structure & Reading Order
 
-### Start Here: Entry Point
-**File**: `src/index.ts`
+### Entry Points
 
-This is where the orchestrator is configured and tested. It demonstrates:
-1. Creating safety configuration
-2. Initializing the orchestrator
-3. Running 4 scenarios to test the system
+| Command | File | Purpose |
+|---------|------|---------|
+| `npm run test` | `src/index.ts` | One-shot integration + Phase 4 chaos tests |
+| `npm run dev` | `src/main.ts` | Continuous 30-second live pipeline |
+| `npm run sim` | `src/continuous-simulator.ts` | Dev-only M1+M2 optimizer (bypasses orchestrator) |
 
-**Read this first to understand the big picture!**
+**Start with `npm run test`** to verify all scenarios pass, then `npm run dev` for the live demo loop.
 
 ---
 
@@ -63,8 +66,8 @@ This is where the orchestrator is configured and tested. It demonstrates:
 - `Layer2Payload` - Input from camera perception system
 - `ActuationCommand` - Output to hardware
 - `EmergencyToken` - Emergency vehicle signals
-- `OptimizationProposal` - Member 1's output
-- `EmergencyResponse` - Member 2's output
+- `OptimizationProposal` - Member 2 optimizer output (via adapter)
+- `EmergencyResponse` - Member 2 emergency output
 - `HistoricalTimingPlan` - Fallback database
 
 **Key constants**:
@@ -85,12 +88,12 @@ This is where the orchestrator is configured and tested. It demonstrates:
 **Key method**: `orchestrateActuation()`
 - Stage 1: Check if Layer 2 data is stale (>10 seconds old)
 - Stage 2: Resilience check (Member 4 entry)
-- Stage 3: Decide between normal mode (Member 1) or emergency (Member 2)
+- Stage 3: Member 1 scoring + Member 2 optimization (or emergency corridor)
 - Stage 4: Safety validation (Member 3 entry)
 - Stage 5: Build final command
 - Stage 6: Resilience enforcement (Member 4 final)
 
-**TODOs for Members 1 & 2** are marked with comments
+**Adapter methods** in the orchestrator translate data between member formats (e.g. `Layer2Payload` → `ApproachMetrics`, `ProposedPlan` → `OptimizationProposal`).
 
 **Read this third** - understand the orchestration flow
 
@@ -115,10 +118,10 @@ Rule 2: Phase transitions must include:
 Rule 3: Don't interrupt pedestrian walk phases prematurely
 ```
 
-**Configuration** (from index.ts):
+**Configuration** (from `src/config.ts`):
 ```javascript
 safetyConfig = {
-    minYellowSeconds: 3,
+    minYellowSeconds: 5,
     minAllRedSeconds: 2,
     minPedestrianWalkSeconds: 8,
     minGreenEnforced: 10,
@@ -168,7 +171,7 @@ else → USE_OPTIMIZED_PLAN (normal operation)
 - Generates historical timing plans
 - Can simulate emergency tokens
 
-**Used in**: `index.ts` for scenario testing
+**Used in**: `main.ts` (continuous loop) and `index.ts` (integration tests)
 
 **Read this last** - for understanding test data generation
 
@@ -213,7 +216,7 @@ STAGE 4: Safety Validation (Member 3)
 │  └─ Proposed: EAST
 │  ├─ NORTH conflicts with SOUTH? YES, but SOUTH not active ✅
 │  ├─ Min green enforced (10s) met? YES ✅
-│  └─ Insert clearances: Yellow=3s, AllRed=2s ✅
+│  └─ Insert clearances: Yellow=5s, AllRed=2s ✅
 └─ Safety: PASSED
 
 STAGE 5: Build Final Command
@@ -221,7 +224,7 @@ STAGE 5: Build Final Command
 ├─ durationSeconds: 45
 ├─ executionMode: "NORMAL_MAX_PRESSURE"
 ├─ clearanceIntervals:
-│  ├─ yellowSeconds: 3
+│  ├─ yellowSeconds: 5
 │  └─ allRedSeconds: 2
 └─ commandId: "CMD-1719000054996"
 
@@ -231,7 +234,7 @@ STAGE 6: Resilience Enforcement (Member 4)
 
 OUTPUT: ActuationCommand
 ├─ Command: Switch EAST green for 45 seconds
-├─ Insert 3s yellow before cut-off
+├─ Insert 5s yellow before cut-off
 ├─ Insert 2s all-red after
 └─ Mode: NORMAL_MAX_PRESSURE (AI-optimized)
 ```
@@ -306,54 +309,39 @@ Result: System degrades gracefully to safe, predictable behavior
 
 ---
 
-## 🧪 Test Scenarios in index.ts
+## 🧪 Test Scenarios (`npm run test`)
 
-The project runs 4 integration test scenarios:
+The project runs 4 integration scenarios plus 2 Phase 4 chaos tests:
 
 | # | Scenario | Input | Expected Result |
 |---|----------|-------|-----------------|
-| **1** | Normal Operation | Confidence 88% | NORMAL_MODE, EAST phase |
-| **2** | Emergency Mode | Confidence 88% + EMV | EMERGENCY_MODE, EAST extended |
-| **3** | Low Confidence Hijack | Confidence 62% | HISTORICAL_FALLBACK, NORTH phase |
-| **4** | Stale Data | Data age 11s (>10s limit) | HISTORICAL_FALLBACK, forced |
+| **1** | Normal Operation | Confidence 88% | NORMAL_MODE, optimized phase |
+| **2** | Emergency Mode | Confidence 88% + EMV | EMERGENCY_MODE, GREEN_CORRIDOR |
+| **3** | Low Confidence Hijack | Confidence 62% | HISTORICAL_FALLBACK |
+| **4** | Stale Data | Data age 11s (>10s limit) | HISTORICAL_FALLBACK |
+| **C1** | Chaos: Conflicting Greens | NORTH+SOUTH simultaneous | Safety gate FORCE_FALLBACK |
+| **C2** | Chaos: Smog | Confidence 55% | Member 4 hijack activated |
 
-### Run Tests
+### Run Commands
 ```bash
-npm run dev              # Run with ts-node
-npm run build           # Compile to JavaScript
-npm start               # Run compiled version
+npm run test             # Integration + chaos tests (one-shot)
+npm run dev              # Continuous 30-second pipeline
+npm run build            # Compile to JavaScript
+npm start                # Run compiled continuous pipeline
+npm run sim              # Dev-only optimizer simulator
 ```
 
 ---
 
-## 🔴 What's Incomplete (TODOs)
+## ✅ Implementation Status
 
-### Member 1: Normal-Mode Architect
-**File**: `src/stm-orchestrator.ts` → `generateNormalModeProposal()`
+All four members and the orchestrator are complete:
 
-**What needs to be implemented**:
-- Person-centric weighted vehicle counting
-  - Weight each vehicle by `VEHICLE_WEIGHTS[type]` and occupancy
-- Max-Pressure formula:
-  ```
-  Priority Score = Sum of (Vehicle Weight × Count) for each approach
-  Proposed Green Time = Calculate based on queue buildup rate
-  ```
-- Return `OptimizationProposal` with:
-  - `approachId`: Which phase should be green
-  - `priorityScore`: Weighted vehicle count
-  - `proposedGreenTime`: Duration calculation
-
----
-
-### Member 2: Emergency Pathfinder
-**File**: `src/stm-orchestrator.ts` → `generateEmergencyResponse()`
-
-**What needs to be implemented**:
-- Green Corridor timing calculations
-- Conflict Index refinement (currently `priority * 100 - eta`)
-- Determine optimal green duration for emergency vehicle
-- Return `EmergencyResponse` with detailed planning
+- **Member 1** — `scoreAllApproaches()` in `types/types.ts`
+- **Member 2** — `runMaxPressureOptimizer()` in `max-pressure-optimizer.ts` + `generateEmergencyResponse()` in orchestrator
+- **Member 3** — `SafetySupervisor.validateProposedActuation()`
+- **Member 4** — `ResilienceHandler.evaluateConfidenceAndDecide()` + `hijackAndEnforceHistorical()`
+- **Mocks** — Layer 2 cameras, historical DB, EMVS dispatch, console actuation (Layer 4)
 
 ---
 
@@ -366,7 +354,7 @@ npm start               # Run compiled version
 - **Warning threshold: 80%** - Monitor closely
 
 ### Clearance Intervals
-- **Yellow**: Warning period when signal changes from green to red (typically 3-5 seconds)
+- **Yellow**: Warning period when signal changes from green to red (5 seconds)
 - **All-Red**: Safety gap where all conflicting phases are red (typically 2-3 seconds)
 
 ### Execution Modes
@@ -404,10 +392,10 @@ npm start               # Run compiled version
 
 ## 📝 Configuration Reference
 
-From `index.ts`:
+From `src/config.ts`:
 ```javascript
 const safetyConfig = {
-    minYellowSeconds: 3,          // Minimum yellow light duration
+    minYellowSeconds: 5,          // Minimum yellow light duration
     minAllRedSeconds: 2,          // Minimum all-red safety gap
     minPedestrianWalkSeconds: 8,  // Minimum pedestrian walk duration
     minGreenEnforced: 10,         // Minimum green before transition
@@ -433,11 +421,11 @@ const defaultPhaseIfNoProposal = "NORTH";  // Safe default
 ## 🎓 Learning Path
 
 ### For New Team Members:
-1. **Day 1**: Read this guide + `index.ts` + `types.ts`
-2. **Day 2**: Trace through `stm-orchestrator.ts` manually
+1. **Day 1**: Read this guide + run `npm run test`
+2. **Day 2**: Trace through `stm-orchestrator.ts` and `config.ts`
 3. **Day 3**: Study `safety-supervisor.ts` and `resilience-handler.ts`
-4. **Day 4**: Run scenarios and understand the outputs
-5. **Day 5**: Implement Member 1 (Normal-Mode Architect)
+4. **Day 4**: Run `npm run dev` and observe the 30-second live loop
+5. **Day 5**: Extend mocks or tune scoring constants in `types.ts`
 
 ### For Understanding Safety:
 → Read `safety-supervisor.ts` first
@@ -446,17 +434,17 @@ const defaultPhaseIfNoProposal = "NORTH";  // Safe default
 → Read `resilience-handler.ts` first
 
 ### For Implementing Features:
-→ Understand Members 1 & 2 TODOs in `stm-orchestrator.ts`
+→ Update the relevant member file, then wire through `stm-orchestrator.ts`
 
 ---
 
-## 🚀 Next Steps
+## 🚀 Next Steps (Production)
 
-1. **Implement Member 1**: Max-Pressure optimization
-2. **Implement Member 2**: Emergency pathfinding
-3. **Add integration tests** for edge cases
-4. **Deploy to real junction** with safety validation
-5. **Monitor confidence scores** in production
+1. Connect real Layer 2 camera API instead of mock generator
+2. Connect Layer 4 hardware actuation instead of `console.log`
+3. Add multi-EMV tie-breaker when two ambulances conflict
+4. Deploy to a real junction with safety validation
+5. Monitor confidence scores in production
 
 ---
 
